@@ -5,9 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-GEMINI_3_FLASH_PREVIEW_INPUT_PER_1M_USD = 0.50
-GEMINI_3_FLASH_PREVIEW_OUTPUT_PER_1M_USD = 3.00
-GEMINI_3_FLASH_PRICING_SOURCE = "https://ai.google.dev/pricing"
+GEMINI_FLASH_PREVIEW_MODEL = "gemini-3-flash-preview"
+GEMINI_FLASH_PREVIEW_INPUT_PER_1M_USD = 0.50
+GEMINI_FLASH_PREVIEW_OUTPUT_PER_1M_USD = 3.00
+GEMINI_FLASH_PRICING_SOURCE = "https://ai.google.dev/pricing"
 
 
 @dataclass(frozen=True)
@@ -59,10 +60,10 @@ class CostEstimate:
 def estimate_cost(
     usage: TokenUsage,
     *,
-    input_price_per_1m: float = GEMINI_3_FLASH_PREVIEW_INPUT_PER_1M_USD,
-    output_price_per_1m: float = GEMINI_3_FLASH_PREVIEW_OUTPUT_PER_1M_USD,
+    input_price_per_1m: float = GEMINI_FLASH_PREVIEW_INPUT_PER_1M_USD,
+    output_price_per_1m: float = GEMINI_FLASH_PREVIEW_OUTPUT_PER_1M_USD,
     currency: str = "USD",
-    pricing_source: str = GEMINI_3_FLASH_PRICING_SOURCE,
+    pricing_source: str = GEMINI_FLASH_PRICING_SOURCE,
 ) -> CostEstimate:
     input_cost = usage.input_tokens * input_price_per_1m / 1_000_000
     output_cost = usage.output_tokens * output_price_per_1m / 1_000_000

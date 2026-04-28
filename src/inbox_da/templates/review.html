@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Review queue{% endblock %}
+{% block content %}
+<section class="page-header">
+  <div>
+    <h1>Review Queue</h1>
+    <p>Emails that are new, failed, need review, or have manual overrides.</p>
+  </div>
+</section>
+<section class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>Email</th>
+        <th>Subject</th>
+        <th>Email status</th>
+        <th>Verification</th>
+        <th>Amount</th>
+        <th>Review</th>
+        <th>Action</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+      <tr>
+        <td>#{{ row.email_id }}</td>
+        <td>{{ row.subject }}</td>
+        <td><span class="badge status-{{ row.email_status }}">{{ row.email_status }}</span></td>
+        <td>{{ row.verification_status or "none" }}</td>
+        <td>{% if row.amount is not none %}{{ row.amount }} {{ row.currency }}{% endif %}</td>
+        <td>{{ row.review_action or "" }}</td>
+        <td><a class="button" href="/emails/{{ row.email_id }}">Review</a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

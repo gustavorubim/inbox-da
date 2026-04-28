@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import os
 import time
 from contextlib import closing
 from pathlib import Path
@@ -347,3 +348,53 @@ def cost_report(
 
     if csv_path:
         print_key_values("Cost Report CSV", {"path": csv_path, "rows": len(rows)})
+
+
+@app.command("web")
+def web(
+    host: Annotated[str, typer.Option("--host")] = "127.0.0.1",
+    port: Annotated[int, typer.Option("--port", min=1, max=65535)] = 8000,
+    reload: Annotated[bool, typer.Option("--reload", help="Reload on code changes.")] = False,
+    config: ConfigOpt = Path("configs/default.yaml"),
+    offline_demo: Annotated[
+        bool,
+        typer.Option(
+            "--offline-demo/--live-agent",
+            help="Use deterministic local processing from web buttons instead of Gemini.",
+        ),
+    ] = True,
+) -> None:
+    settings = load_settings(config)
+    configure_logging(settings.log_level)
+    with closing(db.connect(settings.database_path)) as conn:
+        db.init_db(conn)
+    import uvicorn
+
+    print_key_values(
+        "Web Console",
+        {
+            "url": f"http://{host}:{port}",
+            "database": settings.database_path,
+            "button_processing": "offline-demo" if offline_demo else "live-agent",
+        },
+    )
+    from inbox_da.web import create_app
+
+    if reload:
+        os.environ["INBOX_DA_CONFIG"] = str(config)
+        os.environ["INBOX_DA_WEB_OFFLINE_DEMO"] = "1" if offline_demo else "0"
+        uvicorn.run(
+            "inbox_da.web:create_app_from_env",
+            host=host,
+            port=port,
+            reload=True,
+            factory=True,
+            log_level=settings.log_level.lower(),
+        )
+    else:
+        uvicorn.run(
+            create_app(settings, process_offline_demo=offline_demo),
+            host=host,
+            port=port,
+            log_level=settings.log_level.lower(),
+        )

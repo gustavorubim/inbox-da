@@ -102,3 +102,16 @@ CREATE TABLE IF NOT EXISTS email_processing_costs (
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (email_id) REFERENCES emails(id) ON DELETE CASCADE
 );
+
+CREATE TABLE IF NOT EXISTS review_actions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    email_id INTEGER NOT NULL,
+    extraction_id INTEGER,
+    action TEXT NOT NULL,
+    reviewer TEXT,
+    override_payload_json TEXT NOT NULL,
+    note TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (email_id) REFERENCES emails(id) ON DELETE CASCADE,
+    FOREIGN KEY (extraction_id) REFERENCES structured_extraction(id) ON DELETE SET NULL
+);

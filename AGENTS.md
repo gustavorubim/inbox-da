@@ -27,8 +27,10 @@ uv run pytest --cov=src/inbox_da --cov-report=term-missing --cov-fail-under=90
 - Write database changes through typed repository functions.
 - Preserve `emails`, `attachments`, `structured_extraction`,
   `extraction_runs`, `task_traces`, `email_extraction_traces`, and
-  `email_processing_costs`.
+  `email_processing_costs`, and `review_actions`.
 - Keep terminal output useful with Rich and keep task traces auditable in SQLite.
+- Keep the FastAPI web monitor operational when changing schema, review, trace,
+  extraction, or cost behavior.
 - Keep per-email trace and cost writes in sync with processing behavior.
 - Update README whenever commands, configuration, schema, or workflow behavior
   changes.

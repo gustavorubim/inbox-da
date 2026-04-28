@@ -10,11 +10,12 @@ from deepagents.backends.filesystem import FilesystemBackend
 from deepagents.middleware.permissions import FilesystemPermission
 
 from inbox_da.config import Settings
+from inbox_da.costing import GEMINI_FLASH_PREVIEW_MODEL
 
 
 def validate_model_config(settings: Settings, *, require_credentials: bool = True) -> None:
-    if settings.model_name != "gemini-3-flash-preview":
-        raise ValueError("This project requires model_name='gemini-3-flash-preview'")
+    if settings.model_name != GEMINI_FLASH_PREVIEW_MODEL:
+        raise ValueError(f"This project requires model_name='{GEMINI_FLASH_PREVIEW_MODEL}'")
     if require_credentials and not os.getenv("GOOGLE_API_KEY"):
         raise RuntimeError("GOOGLE_API_KEY must be set before running agent commands")
 

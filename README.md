@@ -39,6 +39,7 @@ uv run inbox-da export-trace --email-id 1 --output data/email_1_trace.csv
 uv run inbox-da cost-report
 uv run inbox-da cost-report --format csv --output data/cost_report.csv
 uv run inbox-da export --format csv
+uv run inbox-da web --host 127.0.0.1 --port 8000
 ```
 
 ```mermaid
@@ -51,10 +52,13 @@ flowchart LR
     trace --> tracecsv["export-trace --output trace.csv"]
     process --> cost["cost-report"]
     process --> export["export --format csv"]
+    process --> web["web monitor"]
     watch --> inspect
+    web --> inspect
+    web --> trace
 
     classDef command fill:#e7f0ff,stroke:#3366cc,color:#102a43
-    class init,seed,process,watch,inspect,trace,tracecsv,cost,export command
+    class init,seed,process,watch,inspect,trace,tracecsv,cost,export,web command
 ```
 
 The CLI uses Rich panels, spinners, progress indicators, and tables so long
@@ -88,6 +92,9 @@ flowchart TB
     src --> costing["costing.py<br/>token usage and cost estimates"]
     src --> logging["logging_utils.py<br/>Rich terminal output"]
     src --> cfg["config.py<br/>YAML and .env settings"]
+    src --> webapp["web.py<br/>FastAPI monitoring console"]
+    src --> templates["templates/*.html<br/>Jinja2 pages"]
+    src --> static["static/app.css<br/>dashboard styling"]
 
     skills --> skillA["attachment-analysis"]
     skills --> skillB["financial-extraction"]
@@ -105,7 +112,7 @@ flowchart TB
     classDef docs fill:#fefce8,stroke:#a16207,color:#422006
     class repo repo
     class data,config,env runtime
-    class src,cli,agent,attachments,db,schema,models,provider,synthetic,costing,logging,cfg code
+    class src,cli,agent,attachments,db,schema,models,provider,synthetic,costing,logging,cfg,webapp,templates,static code
     class tests,t1,t2,t3,t4 tests
     class docs,skills,memory,skillA,skillB,skillC docs
 ```
@@ -115,7 +122,9 @@ flowchart TB
 ```mermaid
 flowchart TB
     user["Operator"] --> cli["Typer CLI<br/>src/inbox_da/cli.py"]
+    user --> webui["FastAPI web console<br/>src/inbox_da/web.py"]
     cli --> settings["Settings<br/>config.py + configs/default.yaml + .env"]
+    webui --> settings
     settings --> dbconn["SQLite connection<br/>db.connect"]
     dbconn --> schema["schema.sql<br/>init_db"]
 
@@ -143,6 +152,9 @@ flowchart TB
     workflow --> costs["email_processing_costs"]
 
     cli --> reports["inspect, trace, export-trace, cost-report, export"]
+    webui --> pages["Inbox, email detail, review queue, cost dashboard"]
+    pages --> reviewactions["review_actions table"]
+    pages --> workflow
     reports --> extraction
     reports --> traces
     reports --> costs
@@ -153,10 +165,57 @@ flowchart TB
     classDef agent fill:#fae8ff,stroke:#a21caf,color:#4a044e
     classDef report fill:#fce7f3,stroke:#db2777,color:#500724
     class user operator
-    class cli,reports report
+    class cli,reports,webui,pages report
     class settings config
-    class dbconn,schema,emails,attachmentsdb,attachmentfiles,extraction,runs,traces,costs storage
+    class dbconn,schema,emails,attachmentsdb,attachmentfiles,extraction,runs,traces,costs,reviewactions storage
     class workflow,attachmentparser,vision,model,deepagents,subagents,skills,memory,generator agent
+```
+
+## Web Monitor
+
+Start the web console with:
+
+```bash
+uv run inbox-da web --host 127.0.0.1 --port 8000
+```
+
+The default web command uses offline deterministic processing for browser
+buttons so you can safely demo the interface without spending Gemini calls. Use
+`--live-agent` when you want the browser `Process` button to call Gemini.
+
+On each email detail page, the web console also shows explicit action buttons:
+
+- `Process with Gemini LLM`: always runs the live Gemini/DeepAgents workflow.
+- `Process offline demo`: always runs deterministic local extraction.
+- `Process default`: follows the web server mode, which defaults to offline
+  unless the server was started with `--live-agent`.
+
+```mermaid
+flowchart LR
+    web["FastAPI app"] --> inbox["Inbox dashboard"]
+    web --> detail["Email detail"]
+    web --> review["Review queue"]
+    web --> cost["Cost dashboard"]
+    detail --> process["Process default button"]
+    detail --> live["Process with Gemini LLM button"]
+    detail --> offline["Process offline demo button"]
+    process --> agent["process_email"]
+    live --> agent
+    offline --> agent
+    detail --> approve["Approve extraction"]
+    detail --> override["Save field override"]
+    approve --> audit["review_actions"]
+    override --> audit
+    agent --> extraction["structured_extraction"]
+    agent --> traces["email_extraction_traces"]
+    agent --> costs["email_processing_costs"]
+
+    classDef ui fill:#eff6ff,stroke:#2563eb,color:#172554
+    classDef action fill:#fef3c7,stroke:#d97706,color:#451a03
+    classDef db fill:#dcfce7,stroke:#16a34a,color:#052e16
+    class web,inbox,detail,review,cost ui
+    class process,live,offline,approve,override,agent action
+    class audit,extraction,traces,costs db
 ```
 
 ## Email Processing Function Flow
@@ -342,6 +401,8 @@ erDiagram
     emails ||--o{ task_traces : traces
     emails ||--o{ email_extraction_traces : traces
     emails ||--o{ email_processing_costs : costs
+    emails ||--o{ review_actions : reviews
+    structured_extraction ||--o{ review_actions : reviewed_by
 
     emails {
         INTEGER id PK
@@ -437,6 +498,17 @@ erDiagram
         REAL output_price_per_1m
         TEXT pricing_source
         TEXT detail_json
+        TEXT created_at
+    }
+
+    review_actions {
+        INTEGER id PK
+        INTEGER email_id FK
+        INTEGER extraction_id FK
+        TEXT action
+        TEXT reviewer
+        TEXT override_payload_json
+        TEXT note
         TEXT created_at
     }
 ```
@@ -571,6 +643,22 @@ Per-email token usage and estimated model cost.
 | `detail_json` | TEXT | Cost calculation details by stage |
 | `created_at` | TEXT | Insert timestamp |
 
+### `review_actions`
+
+Append-only human review audit trail. The web console writes approvals and
+field overrides here instead of mutating model output rows in place.
+
+| Column | Type | Notes |
+|---|---:|---|
+| `id` | INTEGER | Primary key |
+| `email_id` | INTEGER | Foreign key to `emails.id` |
+| `extraction_id` | INTEGER | Optional foreign key to `structured_extraction.id` |
+| `action` | TEXT | `approve` or `override` |
+| `reviewer` | TEXT | Human reviewer label |
+| `override_payload_json` | TEXT | Field override JSON |
+| `note` | TEXT | Reviewer note |
+| `created_at` | TEXT | Insert timestamp |
+
 ## Data Lifecycle
 
 ```mermaid
@@ -580,6 +668,8 @@ stateDiagram-v2
     processing --> processed: process_email completes
     processing --> failed: future failure handler
     new --> processed: direct process command
+    processed --> reviewed: web approve or override
+    reviewed --> [*]: inspect, trace, export, cost-report
     processed --> [*]: inspect, trace, export, cost-report
     failed --> [*]: inspect trace rows
 ```
@@ -637,7 +727,8 @@ uv run inbox-da cost-report --format csv --output data/cost_report.csv
 
 | Area | File | Main functions or classes |
 |---|---|---|
-| CLI | `src/inbox_da/cli.py` | `init_db`, `seed`, `process`, `watch`, `inspect_email`, `trace_email`, `export_trace`, `cost_report` |
+| CLI | `src/inbox_da/cli.py` | `init_db`, `seed`, `process`, `watch`, `inspect_email`, `trace_email`, `export_trace`, `cost_report`, `web` |
+| Web monitor | `src/inbox_da/web.py` | `create_app`, inbox, email detail, review actions, cost dashboard |
 | Workflow | `src/inbox_da/agent.py` | `process_email`, `_parse_attachments`, `_run_extractors`, `_choose_final` |
 | Gemini and DeepAgents | `src/inbox_da/model_provider.py` | `build_gemini_model`, `build_deep_agent`, `build_subagents` |
 | Attachment parsing | `src/inbox_da/attachments.py` | `parse_attachment`, `GeminiVisionParser`, `OfflineVisionParser` |

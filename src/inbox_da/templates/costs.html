@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}Cost report{% endblock %}
+{% block content %}
+<section class="page-header">
+  <div>
+    <h1>Cost Report</h1>
+    <p>Latest processing cost per email, summarized without double-counting retries.</p>
+  </div>
+</section>
+<section class="metrics">
+  <div><span>{{ summary.email_count or 0 }}</span><label>emails</label></div>
+  <div><span>{{ summary.model_calls or 0 }}</span><label>model calls</label></div>
+  <div><span>{{ summary.input_tokens or 0 }}</span><label>input tokens</label></div>
+  <div><span>{{ summary.output_tokens or 0 }}</span><label>output tokens</label></div>
+  <div><span>{{ "%.6f"|format(summary.total_cost or 0) }}</span><label>{{ summary.currency or "USD" }}</label></div>
+</section>
+<section class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>Email</th>
+        <th>Subject</th>
+        <th>Verification</th>
+        <th>Tokens</th>
+        <th>Calls</th>
+        <th>Cost</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+      <tr>
+        <td><a href="/emails/{{ row.email_id }}">#{{ row.email_id }}</a></td>
+        <td>{{ row.subject }}</td>
+        <td>{{ row.verification_status or "" }}</td>
+        <td>{{ row.total_tokens }}</td>
+        <td>{{ row.model_calls }}</td>
+        <td>{{ "%.8f"|format(row.total_cost) }} {{ row.currency }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

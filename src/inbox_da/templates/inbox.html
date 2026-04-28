@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}Inbox monitor{% endblock %}
+{% block content %}
+<section class="page-header">
+  <div>
+    <h1>Inbox Monitor</h1>
+    <p>Financial messages, extraction status, review state, and processing cost.</p>
+  </div>
+</section>
+
+<section class="metrics">
+  <div><span>{{ summary.emails }}</span><label>emails</label></div>
+  <div><span>{{ summary.new }}</span><label>new</label></div>
+  <div><span>{{ summary.processed }}</span><label>processed</label></div>
+  <div><span>{{ summary.needs_review }}</span><label>needs review</label></div>
+  <div><span>{{ "%.6f"|format(summary.total_cost) }}</span><label>{{ summary.currency }} cost</label></div>
+</section>
+
+<section class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>Email</th>
+        <th>Received</th>
+        <th>Sender</th>
+        <th>Subject</th>
+        <th>Status</th>
+        <th>Extraction</th>
+        <th>Cost</th>
+        <th>Action</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+      <tr>
+        <td><a href="/emails/{{ row.id }}">#{{ row.id }}</a></td>
+        <td>{{ row.received_at }}</td>
+        <td>{{ row.sender }}</td>
+        <td>{{ row.subject }}</td>
+        <td><span class="badge status-{{ row.status }}">{{ row.status }}</span></td>
+        <td>
+          {% if row.extraction_id %}
+            <span class="badge status-{{ row.verification_status }}">{{ row.verification_status }}</span>
+            <small>{{ row.document_type }} / {{ row.counterparty }}</small>
+          {% else %}
+            <span class="muted">none</span>
+          {% endif %}
+        </td>
+        <td>
+          {% if row.total_cost is not none %}
+            {{ "%.6f"|format(row.total_cost) }} {{ row.currency or "USD" }}
+          {% else %}
+            <span class="muted">not processed</span>
+          {% endif %}
+        </td>
+        <td>
+          <a class="button" href="/emails/{{ row.id }}">Open</a>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

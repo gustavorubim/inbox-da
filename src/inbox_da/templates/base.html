@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}inbox-da monitor{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', path='app.css') }}">
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="/">inbox-da</a>
+      <nav>
+        <a href="/">Inbox</a>
+        <a href="/review">Review</a>
+        <a href="/reports/costs">Costs</a>
+      </nav>
+    </header>
+    <main class="page">
+      {% block content %}{% endblock %}
+    </main>
+  </body>
+</html>

@@ -10,9 +10,10 @@ from typing import Any
 import yaml
 
 from inbox_da.costing import (
-    GEMINI_3_FLASH_PREVIEW_INPUT_PER_1M_USD,
-    GEMINI_3_FLASH_PREVIEW_OUTPUT_PER_1M_USD,
-    GEMINI_3_FLASH_PRICING_SOURCE,
+    GEMINI_FLASH_PREVIEW_INPUT_PER_1M_USD,
+    GEMINI_FLASH_PREVIEW_MODEL,
+    GEMINI_FLASH_PREVIEW_OUTPUT_PER_1M_USD,
+    GEMINI_FLASH_PRICING_SOURCE,
 )
 
 
@@ -20,7 +21,7 @@ from inbox_da.costing import (
 class Settings:
     database_path: Path = Path("data/inbox_da.sqlite")
     attachments_dir: Path = Path("data/attachments")
-    model_name: str = "gemini-3-flash-preview"
+    model_name: str = GEMINI_FLASH_PREVIEW_MODEL
     temperature: float = 0.0
     watch_interval_seconds: int = 5
     attachment_text_min_chars: int = 80
@@ -31,10 +32,10 @@ class Settings:
     skill_paths: tuple[str, ...] = ("/skills/project/",)
     memory_paths: tuple[str, ...] = ("/memories/AGENTS.md",)
     async_subagents: tuple[dict[str, Any], ...] = field(default_factory=tuple)
-    cost_input_per_1m: float = GEMINI_3_FLASH_PREVIEW_INPUT_PER_1M_USD
-    cost_output_per_1m: float = GEMINI_3_FLASH_PREVIEW_OUTPUT_PER_1M_USD
+    cost_input_per_1m: float = GEMINI_FLASH_PREVIEW_INPUT_PER_1M_USD
+    cost_output_per_1m: float = GEMINI_FLASH_PREVIEW_OUTPUT_PER_1M_USD
     cost_currency: str = "USD"
-    cost_pricing_source: str = GEMINI_3_FLASH_PRICING_SOURCE
+    cost_pricing_source: str = GEMINI_FLASH_PRICING_SOURCE
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Settings:

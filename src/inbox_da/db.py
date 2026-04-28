@@ -72,6 +72,69 @@ def get_email(conn: sqlite3.Connection, email_id: int) -> sqlite3.Row:
     return row
 
 
+def list_email_dashboard_rows(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    return list(
+        conn.execute(
+            """
+            WITH latest_extractions AS (
+                SELECT email_id, MAX(id) AS id
+                FROM structured_extraction
+                GROUP BY email_id
+            ),
+            latest_costs AS (
+                SELECT email_id, MAX(id) AS id
+                FROM email_processing_costs
+                GROUP BY email_id
+            ),
+            latest_reviews AS (
+                SELECT email_id, MAX(id) AS id
+                FROM review_actions
+                GROUP BY email_id
+            )
+            SELECT
+                e.id,
+                e.sender,
+                e.received_at,
+                e.subject,
+                e.status,
+                e.processed_at,
+                s.id AS extraction_id,
+                s.document_type,
+                s.counterparty,
+                s.amount,
+                s.currency,
+                s.verification_status,
+                c.total_cost,
+                c.total_tokens,
+                c.model_calls,
+                c.currency,
+                r.action AS review_action,
+                r.created_at AS review_created_at
+            FROM emails e
+            LEFT JOIN latest_extractions le ON le.email_id = e.id
+            LEFT JOIN structured_extraction s ON s.id = le.id
+            LEFT JOIN latest_costs lc ON lc.email_id = e.id
+            LEFT JOIN email_processing_costs c ON c.id = lc.id
+            LEFT JOIN latest_reviews lr ON lr.email_id = e.id
+            LEFT JOIN review_actions r ON r.id = lr.id
+            ORDER BY e.received_at DESC, e.id DESC
+            """
+        )
+    )
+
+
+def latest_structured_extraction(conn: sqlite3.Connection, email_id: int) -> sqlite3.Row | None:
+    return conn.execute(
+        """
+        SELECT * FROM structured_extraction
+        WHERE email_id = ?
+        ORDER BY id DESC
+        LIMIT 1
+        """,
+        (email_id,),
+    ).fetchone()
+
+
 def list_attachments(conn: sqlite3.Connection, email_id: int) -> list[sqlite3.Row]:
     return list(conn.execute("SELECT * FROM attachments WHERE email_id = ?", (email_id,)))
 
@@ -257,6 +320,92 @@ def insert_email_processing_cost(
     )
     conn.commit()
     return int(cursor.lastrowid)
+
+
+def insert_review_action(
+    conn: sqlite3.Connection,
+    *,
+    email_id: int,
+    extraction_id: int | None,
+    action: str,
+    reviewer: str | None,
+    override_payload: dict[str, Any] | None = None,
+    note: str | None = None,
+) -> int:
+    cursor = conn.execute(
+        """
+        INSERT INTO review_actions (
+            email_id, extraction_id, action, reviewer, override_payload_json, note
+        )
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            email_id,
+            extraction_id,
+            action,
+            reviewer,
+            json.dumps(override_payload or {}, sort_keys=True),
+            note,
+        ),
+    )
+    conn.commit()
+    return int(cursor.lastrowid)
+
+
+def list_review_actions(conn: sqlite3.Connection, email_id: int) -> list[sqlite3.Row]:
+    return list(
+        conn.execute(
+            """
+            SELECT * FROM review_actions
+            WHERE email_id = ?
+            ORDER BY id DESC
+            """,
+            (email_id,),
+        )
+    )
+
+
+def list_review_queue(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    return list(
+        conn.execute(
+            """
+            WITH latest_extractions AS (
+                SELECT email_id, MAX(id) AS id
+                FROM structured_extraction
+                GROUP BY email_id
+            ),
+            latest_reviews AS (
+                SELECT email_id, MAX(id) AS id
+                FROM review_actions
+                GROUP BY email_id
+            )
+            SELECT
+                e.id AS email_id,
+                e.sender,
+                e.received_at,
+                e.subject,
+                e.status AS email_status,
+                s.id AS extraction_id,
+                s.document_type,
+                s.counterparty,
+                s.amount,
+                s.currency,
+                s.verification_status,
+                r.action AS review_action,
+                r.note AS review_note
+            FROM emails e
+            LEFT JOIN latest_extractions le ON le.email_id = e.id
+            LEFT JOIN structured_extraction s ON s.id = le.id
+            LEFT JOIN latest_reviews lr ON lr.email_id = e.id
+            LEFT JOIN review_actions r ON r.id = lr.id
+            WHERE
+                s.verification_status = 'needs_review'
+                OR e.status IN ('new', 'failed')
+                OR r.action = 'override'
+            ORDER BY e.received_at DESC, e.id DESC
+            """
+        )
+    )
 
 
 def latest_email_cost(conn: sqlite3.Connection, email_id: int) -> sqlite3.Row | None:

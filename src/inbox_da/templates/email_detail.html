@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+{% block title %}Email {{ email.id }}{% endblock %}
+{% block content %}
+<section class="page-header">
+  <div>
+    <h1>Email #{{ email.id }}</h1>
+    <p>{{ email.subject }}</p>
+  </div>
+  <div class="actions">
+    <form method="post" action="/emails/{{ email.id }}/process-live">
+      <button type="submit" class="button-live">Process with Gemini LLM</button>
+    </form>
+    <form method="post" action="/emails/{{ email.id }}/process-offline">
+      <button type="submit" class="button-secondary">Process offline demo</button>
+    </form>
+    <form method="post" action="/emails/{{ email.id }}/process">
+      <button type="submit">Process default</button>
+    </form>
+  </div>
+</section>
+
+<section class="two-col">
+  <div class="panel">
+    <h2>Message</h2>
+    <dl>
+      <dt>Sender</dt><dd>{{ email.sender }}</dd>
+      <dt>Received</dt><dd>{{ email.received_at }}</dd>
+      <dt>Status</dt><dd><span class="badge status-{{ email.status }}">{{ email.status }}</span></dd>
+    </dl>
+    <pre>{{ email.body }}</pre>
+  </div>
+
+  <div class="panel">
+    <h2>Latest Cost</h2>
+    {% if cost %}
+      <dl>
+        <dt>Total</dt><dd>{{ "%.8f"|format(cost.total_cost) }} {{ cost.currency }}</dd>
+        <dt>Tokens</dt><dd>{{ cost.total_tokens }}</dd>
+        <dt>Model calls</dt><dd>{{ cost.model_calls }}</dd>
+      </dl>
+    {% else %}
+      <p class="muted">No cost estimate yet.</p>
+    {% endif %}
+  </div>
+</section>
+
+<section class="panel">
+  <h2>Structured Extraction</h2>
+  {% if extraction %}
+  <div class="extraction-grid">
+    <div><label>Document</label><span>{{ extraction.document_type }}</span></div>
+    <div><label>Counterparty</label><span>{{ extraction.counterparty }}</span></div>
+    <div><label>Amount</label><span>{{ extraction.amount }} {{ extraction.currency }}</span></div>
+    <div><label>Reference</label><span>{{ extraction.reference_number or "" }}</span></div>
+    <div><label>Due date</label><span>{{ extraction.due_date or "" }}</span></div>
+    <div><label>Status</label><span class="badge status-{{ extraction.verification_status }}">{{ extraction.verification_status }}</span></div>
+  </div>
+  <h3>Evidence</h3>
+  <ul class="evidence-list">
+    {% for item in extraction.evidence %}
+      <li><strong>{{ item.source }}</strong>: {{ item.quote }}</li>
+    {% endfor %}
+  </ul>
+  {% else %}
+    <p class="muted">No structured extraction yet.</p>
+  {% endif %}
+</section>
+
+<section class="two-col">
+  <div class="panel">
+    <h2>Review Action</h2>
+    <form method="post" action="/review/{{ email.id }}/approve" class="stack">
+      <input name="reviewer" value="operator" aria-label="Reviewer">
+      <textarea name="note" placeholder="Approval note"></textarea>
+      <button type="submit">Approve current extraction</button>
+    </form>
+    <form method="post" action="/review/{{ email.id }}/override" class="stack">
+      <input name="reviewer" value="operator" aria-label="Reviewer">
+      <input name="document_type" placeholder="Document type">
+      <input name="counterparty" placeholder="Counterparty">
+      <input name="amount" placeholder="Amount">
+      <input name="currency" placeholder="Currency">
+      <input name="reference_number" placeholder="Reference number">
+      <input name="due_date" placeholder="Due date">
+      <textarea name="note" placeholder="Override note"></textarea>
+      <button type="submit">Save override</button>
+    </form>
+  </div>
+
+  <div class="panel">
+    <h2>Review History</h2>
+    {% if reviews %}
+      <ol class="timeline">
+        {% for review in reviews %}
+          <li>
+            <strong>{{ review.action }}</strong> by {{ review.reviewer or "unknown" }}
+            <small>{{ review.created_at }}</small>
+            {% if review.note %}<p>{{ review.note }}</p>{% endif %}
+            {% if review.override_payload %}<pre>{{ review.override_payload }}</pre>{% endif %}
+          </li>
+        {% endfor %}
+      </ol>
+    {% else %}
+      <p class="muted">No review actions yet.</p>
+    {% endif %}
+  </div>
+</section>
+
+<section class="panel">
+  <h2>Attachments</h2>
+  <table>
+    <thead><tr><th>ID</th><th>Filename</th><th>MIME</th><th>Parser</th><th>Text</th></tr></thead>
+    <tbody>
+      {% for attachment in attachments %}
+      <tr>
+        <td>{{ attachment.id }}</td>
+        <td>{{ attachment.filename }}</td>
+        <td>{{ attachment.mime_type }}</td>
+        <td>{{ attachment.parsed_payload.kind if attachment.parsed_payload else "" }}</td>
+        <td><pre>{{ attachment.extracted_text or "" }}</pre></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="panel">
+  <h2>Trace</h2>
+  <ol class="timeline">
+    {% for row in trace_rows %}
+      <li>
+        <strong>{{ row.actor }}.{{ row.event_name }}</strong>
+        <span class="badge status-{{ row.status }}">{{ row.status }}</span>
+        <small>{{ row.created_at }}</small>
+        <p>{{ row.message }}</p>
+      </li>
+    {% endfor %}
+  </ol>
+</section>
+{% endblock %}
