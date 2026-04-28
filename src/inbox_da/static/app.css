@@ -138,6 +138,16 @@ small {
   margin-bottom: 14px;
 }
 
+.notice {
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid #abefc6;
+  border-radius: 6px;
+  background: #ecfdf3;
+  color: var(--ok);
+  font-weight: 700;
+}
+
 .table-wrap {
   overflow: auto;
 }
@@ -224,6 +234,32 @@ button {
   border-color: #b8c0cc;
   background: #ffffff;
   color: var(--text);
+}
+
+.candidate-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.comparison-table {
+  margin: 12px 0;
+  overflow: auto;
+}
+
+.row-disagrees td {
+  background: #fffaf0;
+}
+
+select {
+  width: 100%;
+  min-width: 170px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #ffffff;
+  font: inherit;
 }
 
 dl {

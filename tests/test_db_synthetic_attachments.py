@@ -3,9 +3,10 @@ from pathlib import Path
 
 import fitz
 import pytest
+from langchain_core.messages import HumanMessage
 
 from inbox_da import db
-from inbox_da.attachments import parse_attachment
+from inbox_da.attachments import GeminiVisionParser, parse_attachment
 from inbox_da.config import Settings
 from inbox_da.synthetic import seed_database
 
@@ -17,6 +18,26 @@ class FakeVision:
     def parse_image(self, path: Path, *, mime_type: str) -> dict[str, str]:
         self.calls.append((path, mime_type))
         return {"model_response": "Reference IMG-0001 Amount USD 44.00"}
+
+
+class FakeGeminiModel:
+    def __init__(self) -> None:
+        self.invocations: list[object] = []
+
+    def invoke(self, value: object) -> object:
+        self.invocations.append(value)
+        return type(
+            "Response",
+            (),
+            {
+                "content": "vision response",
+                "usage_metadata": {
+                    "input_tokens": 10,
+                    "output_tokens": 5,
+                    "total_tokens": 15,
+                },
+            },
+        )()
 
 
 @pytest.fixture
@@ -87,6 +108,52 @@ def test_schema_and_foreign_keys(conn: sqlite3.Connection) -> None:
             mime_type="text/plain",
             storage_path="/tmp/bad.txt",
         )
+
+
+def test_review_queue_hides_resolved_needs_review_items(conn: sqlite3.Connection) -> None:
+    email_id = db.insert_email(
+        conn,
+        message_id="<review@test>",
+        sender="sender@example.com",
+        received_at="2026-04-28T10:00:00Z",
+        subject="Review",
+        body="Needs review",
+        status="processed",
+    )
+    extraction_id = db.insert_structured_extraction(
+        conn,
+        email_id=email_id,
+        extraction={
+            "document_type": "invoice",
+            "counterparty": "Acme",
+            "currency": "USD",
+            "amount": 100.0,
+            "financial_category": "accounts_payable",
+            "line_items": [],
+            "evidence": [{"source": "email_body", "quote": "Amount USD 100"}],
+            "confidence": 0.7,
+            "verification_status": "needs_review",
+        },
+    )
+    assert [row["email_id"] for row in db.list_review_queue(conn)] == [email_id]
+
+    db.insert_review_action(
+        conn,
+        email_id=email_id,
+        extraction_id=extraction_id,
+        action="select_candidate",
+        reviewer="tester",
+    )
+    assert db.list_review_queue(conn) == []
+
+    db.insert_review_action(
+        conn,
+        email_id=email_id,
+        extraction_id=extraction_id,
+        action="override",
+        reviewer="tester",
+    )
+    assert [row["email_id"] for row in db.list_review_queue(conn)] == [email_id]
 
 
 def test_relative_database_connection_survives_cwd_change(
@@ -178,3 +245,17 @@ def test_low_text_pdf_routes_to_vision(tmp_path: Path) -> None:
     assert text == ""
     assert payload["kind"] == "pdf_vision_fallback"
     assert vision == {"model_response": "Reference IMG-0001 Amount USD 44.00"}
+
+
+def test_gemini_vision_parser_wraps_content_blocks_in_human_message(tmp_path: Path) -> None:
+    path = tmp_path / "receipt.png"
+    path.write_bytes(b"not-a-real-image-but-valid-bytes-for-base64")
+    model = FakeGeminiModel()
+    summary = GeminiVisionParser(model).parse_image(path, mime_type="image/png")
+    assert summary["model_response"] == "vision response"
+    assert summary["token_usage"]["model_calls"] == 1
+    invocation = model.invocations[0]
+    assert isinstance(invocation, list)
+    assert isinstance(invocation[0], HumanMessage)
+    assert invocation[0].content[0]["type"] == "text"
+    assert invocation[0].content[1]["type"] == "image_url"

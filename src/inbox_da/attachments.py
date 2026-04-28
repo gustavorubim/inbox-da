@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 import fitz
+from langchain_core.messages import HumanMessage
 from openpyxl import load_workbook
 
 from inbox_da.config import Settings
@@ -35,7 +36,7 @@ class GeminiVisionParser:
             },
             {"type": "image_url", "image_url": f"data:{mime_type};base64,{encoded}"},
         ]
-        response = self.model.invoke(content)
+        response = self.model.invoke([HumanMessage(content=content)])
         return {
             "model_response": getattr(response, "content", str(response)),
             "mime_type": mime_type,

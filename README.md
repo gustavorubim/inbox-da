@@ -203,9 +203,14 @@ flowchart LR
     live --> agent
     offline --> agent
     detail --> approve["Approve extraction"]
+    detail --> candidate["Accept candidate or choose fields"]
     detail --> override["Save field override"]
     approve --> audit["review_actions"]
+    candidate --> audit
     override --> audit
+    approve --> reviewed["reviewed final structured_extraction"]
+    candidate --> reviewed
+    override --> reviewed
     agent --> extraction["structured_extraction"]
     agent --> traces["email_extraction_traces"]
     agent --> costs["email_processing_costs"]
@@ -214,8 +219,8 @@ flowchart LR
     classDef action fill:#fef3c7,stroke:#d97706,color:#451a03
     classDef db fill:#dcfce7,stroke:#16a34a,color:#052e16
     class web,inbox,detail,review,cost ui
-    class process,live,offline,approve,override,agent action
-    class audit,extraction,traces,costs db
+    class process,live,offline,approve,candidate,override,agent action
+    class audit,reviewed,extraction,traces,costs db
 ```
 
 ## Email Processing Function Flow
@@ -505,6 +510,7 @@ erDiagram
         INTEGER id PK
         INTEGER email_id FK
         INTEGER extraction_id FK
+        INTEGER selected_run_id FK
         TEXT action
         TEXT reviewer
         TEXT override_payload_json
@@ -645,17 +651,21 @@ Per-email token usage and estimated model cost.
 
 ### `review_actions`
 
-Append-only human review audit trail. The web console writes approvals and
-field overrides here instead of mutating model output rows in place.
+Append-only human review audit trail. The web console writes approvals,
+candidate choices, field choices, and overrides here. When a reviewer applies a
+choice, the app also appends a new final `structured_extraction` row with
+`verification_status='verified'`; it does not overwrite the original model
+output rows.
 
 | Column | Type | Notes |
 |---|---:|---|
 | `id` | INTEGER | Primary key |
 | `email_id` | INTEGER | Foreign key to `emails.id` |
 | `extraction_id` | INTEGER | Optional foreign key to `structured_extraction.id` |
-| `action` | TEXT | `approve` or `override` |
+| `selected_run_id` | INTEGER | Optional foreign key to selected `extraction_runs.id` |
+| `action` | TEXT | `approve`, `select_candidate`, `select_fields`, or `override` |
 | `reviewer` | TEXT | Human reviewer label |
-| `override_payload_json` | TEXT | Field override JSON |
+| `override_payload_json` | TEXT | Selected candidate, field choices, or manual override JSON |
 | `note` | TEXT | Reviewer note |
 | `created_at` | TEXT | Insert timestamp |
 

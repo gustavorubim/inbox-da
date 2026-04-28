@@ -154,12 +154,33 @@ def watch(
         poll_interval = interval or settings.watch_interval_seconds
         while True:
             for email_id in db.claim_new_emails(conn, limit=1):
-                process_email(
-                    conn,
-                    email_id=email_id,
-                    settings=settings,
-                    require_credentials=not offline_demo,
-                )
+                try:
+                    process_email(
+                        conn,
+                        email_id=email_id,
+                        settings=settings,
+                        require_credentials=not offline_demo,
+                    )
+                except Exception as exc:
+                    db.insert_trace(
+                        conn,
+                        email_id=email_id,
+                        task_name="watch",
+                        step_name="process_email",
+                        status="failed",
+                        detail={"email_id": email_id},
+                        error=str(exc),
+                    )
+                    db.insert_email_extraction_trace(
+                        conn,
+                        email_id=email_id,
+                        actor="watch",
+                        event_name="process_failed",
+                        status="failed",
+                        message=str(exc),
+                    )
+                    db.mark_email_status(conn, email_id, "failed")
+                    console.log(f"[red]email {email_id} failed:[/red] {exc}")
             if once:
                 return
             time.sleep(poll_interval)

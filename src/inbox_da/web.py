@@ -53,6 +53,7 @@ def create_app(
 
     @app.get("/emails/{email_id}", response_class=HTMLResponse)
     def email_detail(request: Request, email_id: int) -> HTMLResponse:
+        notice = request.query_params.get("notice", "")
         with closing(db.connect(app.state.settings.database_path)) as conn:
             try:
                 email = dict(db.get_email(conn, email_id))
@@ -71,6 +72,10 @@ def create_app(
                 _decode_json_columns(row)
                 for row in db.rows_to_dicts(db.list_review_actions(conn, email_id))
             ]
+            candidate_comparison = _candidate_comparison(
+                db.rows_to_dicts(db.list_latest_extraction_runs(conn, email_id)),
+                extraction,
+            )
         return templates.TemplateResponse(
             request,
             "email_detail.html",
@@ -81,6 +86,8 @@ def create_app(
                 "cost": cost,
                 "trace_rows": list(reversed(trace_rows)),
                 "reviews": reviews,
+                "candidate_comparison": candidate_comparison,
+                "notice": _notice_text(notice),
                 "process_offline_demo": app.state.process_offline_demo,
             },
         )
@@ -120,15 +127,101 @@ def create_app(
     ) -> RedirectResponse:
         with closing(db.connect(app.state.settings.database_path)) as conn:
             extraction = db.latest_structured_extraction(conn, email_id)
+            if extraction is None:
+                raise HTTPException(
+                    status_code=400, detail="No extraction is available to approve."
+                )
+            reviewed_payload = _reviewed_payload_from_row(extraction)
+            reviewed_extraction_id = db.insert_structured_extraction(
+                conn, email_id=email_id, extraction=reviewed_payload
+            )
             db.insert_review_action(
                 conn,
                 email_id=email_id,
-                extraction_id=int(extraction["id"]) if extraction else None,
+                extraction_id=reviewed_extraction_id,
                 action="approve",
                 reviewer=reviewer,
                 note=note,
             )
-        return RedirectResponse(f"/emails/{email_id}", status_code=303)
+        return _email_redirect(email_id, "approved")
+
+    @app.post("/review/{email_id}/select-candidate")
+    def select_candidate(
+        email_id: int,
+        run_id: int = Form(...),
+        reviewer: str = Form(default="operator"),
+        note: str = Form(default=""),
+    ) -> RedirectResponse:
+        with closing(db.connect(app.state.settings.database_path)) as conn:
+            extraction = db.latest_structured_extraction(conn, email_id)
+            run = db.get_extraction_run(conn, run_id)
+            if int(run["email_id"]) != email_id:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Selected extraction run does not belong to this email.",
+                )
+            payload = json.loads(run["normalized_output_json"])
+            reviewed_payload = _reviewed_payload_from_candidate(payload, extraction)
+            reviewed_extraction_id = db.insert_structured_extraction(
+                conn, email_id=email_id, extraction=reviewed_payload
+            )
+            db.insert_review_action(
+                conn,
+                email_id=email_id,
+                extraction_id=reviewed_extraction_id,
+                selected_run_id=run_id,
+                action="select_candidate",
+                reviewer=reviewer,
+                override_payload={
+                    "selected_run_type": run["run_type"],
+                    "selected_candidate": payload,
+                },
+                note=note,
+            )
+        return _email_redirect(email_id, "candidate_applied")
+
+    @app.post("/review/{email_id}/select-fields")
+    async def select_fields(
+        request: Request,
+        email_id: int,
+        reviewer: str = Form(default="operator"),
+        note: str = Form(default=""),
+    ) -> RedirectResponse:
+        form = await request.form()
+        selected_fields = {
+            key.removeprefix("field_"): value
+            for key, value in form.items()
+            if key.startswith("field_") and value
+        }
+        with closing(db.connect(app.state.settings.database_path)) as conn:
+            extraction = db.latest_structured_extraction(conn, email_id)
+            if extraction is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail="No extraction is available for field selection.",
+                )
+            runs = db.rows_to_dicts(db.list_latest_extraction_runs(conn, email_id))
+            comparison = _candidate_comparison(runs, dict(extraction or {}))
+            override_payload = _field_selection_payload(comparison, selected_fields)
+            selected = override_payload["selected_fields"]
+            if selected:
+                reviewed_payload = _reviewed_payload_from_row(extraction, updates=selected)
+                reviewed_extraction_id = db.insert_structured_extraction(
+                    conn, email_id=email_id, extraction=reviewed_payload
+                )
+            else:
+                reviewed_extraction_id = int(extraction["id"])
+            db.insert_review_action(
+                conn,
+                email_id=email_id,
+                extraction_id=reviewed_extraction_id,
+                action="select_fields",
+                reviewer=reviewer,
+                override_payload=override_payload,
+                note=note,
+            )
+        notice = "field_choices_applied" if selected else "no_field_choices"
+        return _email_redirect(email_id, notice)
 
     @app.post("/review/{email_id}/override")
     def override_email(
@@ -153,16 +246,27 @@ def create_app(
         override_payload = {key: value for key, value in override_payload.items() if value}
         with closing(db.connect(app.state.settings.database_path)) as conn:
             extraction = db.latest_structured_extraction(conn, email_id)
+            if extraction is None:
+                raise HTTPException(
+                    status_code=400, detail="No extraction is available to override."
+                )
+            reviewed_extraction_id = int(extraction["id"])
+            if override_payload:
+                reviewed_payload = _reviewed_payload_from_row(extraction, updates=override_payload)
+                reviewed_extraction_id = db.insert_structured_extraction(
+                    conn, email_id=email_id, extraction=reviewed_payload
+                )
             db.insert_review_action(
                 conn,
                 email_id=email_id,
-                extraction_id=int(extraction["id"]) if extraction else None,
+                extraction_id=reviewed_extraction_id,
                 action="override",
                 reviewer=reviewer,
                 override_payload=override_payload,
                 note=note,
             )
-        return RedirectResponse(f"/emails/{email_id}", status_code=303)
+        notice = "override_applied" if override_payload else "no_override_fields"
+        return _email_redirect(email_id, notice)
 
     @app.get("/review", response_class=HTMLResponse)
     def review_queue(request: Request) -> HTMLResponse:
@@ -216,6 +320,207 @@ def _decode_json_columns(row: dict[str, Any]) -> dict[str, Any]:
             except json.JSONDecodeError:
                 decoded[key.removesuffix("_json")] = decoded[key]
     return decoded
+
+
+NOTICE_MESSAGES = {
+    "approved": "Review approved and applied to the final structured extraction.",
+    "candidate_applied": "Candidate selection applied to the final structured extraction.",
+    "field_choices_applied": "Field choices applied to the final structured extraction.",
+    "no_field_choices": "No field choices were selected, so the final extraction was not changed.",
+    "override_applied": "Manual override applied to the final structured extraction.",
+    "no_override_fields": (
+        "No override fields were entered, so the final extraction was not changed."
+    ),
+}
+
+
+REVIEW_FIELDS = (
+    "document_type",
+    "counterparty",
+    "account_or_customer",
+    "period_start",
+    "period_end",
+    "currency",
+    "amount",
+    "due_date",
+    "reference_number",
+    "financial_category",
+)
+
+
+def _email_redirect(email_id: int, notice: str) -> RedirectResponse:
+    return RedirectResponse(
+        f"/emails/{email_id}?notice={notice}#structured-extraction",
+        status_code=303,
+    )
+
+
+def _notice_text(notice: str) -> str:
+    return NOTICE_MESSAGES.get(notice, "")
+
+
+def _candidate_comparison(runs: list[dict[str, Any]], extraction: dict[str, Any]) -> dict[str, Any]:
+    candidates = []
+    for run in runs:
+        normalized = _json_loads(run.get("normalized_output_json"), {})
+        candidates.append(
+            {
+                "id": run["id"],
+                "run_type": run["run_type"],
+                "status": run["status"],
+                "payload": normalized,
+            }
+        )
+    candidates_by_type = {candidate["run_type"]: candidate for candidate in candidates}
+    left = candidates_by_type.get("extractor_a", {}).get("payload", {})
+    right = candidates_by_type.get("extractor_b", {}).get("payload", {})
+    fields = []
+    for field in REVIEW_FIELDS:
+        left_value = left.get(field)
+        right_value = right.get(field)
+        final_value = extraction.get(field)
+        fields.append(
+            {
+                "name": field,
+                "left": left_value,
+                "right": right_value,
+                "final": final_value,
+                "disagrees": _display_value(left_value) != _display_value(right_value),
+            }
+        )
+    return {
+        "candidates": candidates,
+        "fields": fields,
+        "has_candidates": bool(candidates),
+        "has_disagreements": any(field["disagrees"] for field in fields),
+    }
+
+
+def _field_selection_payload(
+    comparison: dict[str, Any], selected_fields: dict[str, Any]
+) -> dict[str, Any]:
+    selected: dict[str, Any] = {}
+    for field in comparison["fields"]:
+        source = selected_fields.get(field["name"])
+        if source in {"left", "right", "final"}:
+            selected[field["name"]] = field[source]
+    return {"selected_fields": selected, "field_sources": selected_fields}
+
+
+def _reviewed_payload_from_row(
+    extraction: Any,
+    *,
+    updates: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    decoded = _decode_json_columns(dict(extraction))
+    payload = {
+        "document_type": decoded["document_type"],
+        "counterparty": decoded["counterparty"],
+        "account_or_customer": decoded.get("account_or_customer"),
+        "period_start": decoded.get("period_start"),
+        "period_end": decoded.get("period_end"),
+        "currency": decoded["currency"],
+        "amount": _coerce_amount(decoded["amount"]),
+        "due_date": decoded.get("due_date"),
+        "reference_number": decoded.get("reference_number"),
+        "financial_category": decoded["financial_category"],
+        "line_items": decoded.get("line_items", []),
+        "evidence": decoded.get("evidence", []),
+        "confidence": _coerce_confidence(decoded.get("confidence")),
+        "verification_status": "verified",
+    }
+    for field, value in (updates or {}).items():
+        if field in REVIEW_FIELDS and value not in {None, ""}:
+            payload[field] = _coerce_review_value(field, value)
+    return _ensure_reviewed_payload(payload)
+
+
+def _reviewed_payload_from_candidate(
+    candidate: dict[str, Any],
+    fallback_extraction: Any | None,
+) -> dict[str, Any]:
+    payload = (
+        _reviewed_payload_from_row(fallback_extraction) if fallback_extraction is not None else {}
+    )
+    for field in REVIEW_FIELDS:
+        value = candidate.get(field)
+        if value not in {None, ""}:
+            payload[field] = _coerce_review_value(field, value)
+    for field in ("line_items", "evidence"):
+        if candidate.get(field):
+            payload[field] = candidate[field]
+    payload["confidence"] = _coerce_confidence(candidate.get("confidence"))
+    payload["verification_status"] = "verified"
+    return _ensure_reviewed_payload(payload)
+
+
+def _ensure_reviewed_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    missing = [
+        field
+        for field in (
+            "document_type",
+            "counterparty",
+            "currency",
+            "amount",
+            "financial_category",
+        )
+        if payload.get(field) in {None, ""}
+    ]
+    if missing:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Reviewed extraction is missing required fields: {', '.join(missing)}",
+        )
+    if not payload.get("evidence"):
+        payload["evidence"] = [
+            {
+                "source": "review_action",
+                "quote": "Reviewer selected this final extraction from candidate outputs.",
+            }
+        ]
+    payload["amount"] = _coerce_amount(payload["amount"])
+    payload["confidence"] = _coerce_confidence(payload.get("confidence"))
+    payload["verification_status"] = "verified"
+    return payload
+
+
+def _coerce_review_value(field: str, value: Any) -> Any:
+    if field == "amount":
+        return _coerce_amount(value)
+    return value
+
+
+def _coerce_amount(value: Any) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Amount must be numeric; got {value!r}.",
+        ) from exc
+
+
+def _coerce_confidence(value: Any) -> float:
+    try:
+        confidence = float(value)
+    except (TypeError, ValueError):
+        confidence = 0.7
+    return max(0.0, min(1.0, confidence))
+
+
+def _json_loads(value: Any, default: Any) -> Any:
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError:
+            return default
+    return value if value is not None else default
+
+
+def _display_value(value: Any) -> str:
+    if isinstance(value, float):
+        return f"{value:.6f}".rstrip("0").rstrip(".")
+    return "" if value is None else str(value)
 
 
 def _dashboard_summary(conn, rows: list[dict[str, Any]]) -> dict[str, Any]:

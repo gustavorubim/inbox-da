@@ -31,6 +31,11 @@ uv run pytest --cov=src/inbox_da --cov-report=term-missing --cov-fail-under=90
 - Keep terminal output useful with Rich and keep task traces auditable in SQLite.
 - Keep the FastAPI web monitor operational when changing schema, review, trace,
   extraction, or cost behavior.
+- Preserve review auditability: candidate selection, field selection, approval,
+  and manual overrides must be appended to `review_actions` rather than
+  overwriting raw model outputs. If a review action changes the accepted final
+  answer, append a new `structured_extraction` row instead of updating the old
+  row in place.
 - Keep per-email trace and cost writes in sync with processing behavior.
 - Update README whenever commands, configuration, schema, or workflow behavior
   changes.

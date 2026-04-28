@@ -327,21 +327,25 @@ def insert_review_action(
     *,
     email_id: int,
     extraction_id: int | None,
+    selected_run_id: int | None = None,
     action: str,
     reviewer: str | None,
     override_payload: dict[str, Any] | None = None,
     note: str | None = None,
 ) -> int:
+    ensure_review_actions_selected_run_id(conn)
     cursor = conn.execute(
         """
         INSERT INTO review_actions (
-            email_id, extraction_id, action, reviewer, override_payload_json, note
+            email_id, extraction_id, selected_run_id, action, reviewer,
+            override_payload_json, note
         )
-        VALUES (?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
         (
             email_id,
             extraction_id,
+            selected_run_id,
             action,
             reviewer,
             json.dumps(override_payload or {}, sort_keys=True),
@@ -352,7 +356,15 @@ def insert_review_action(
     return int(cursor.lastrowid)
 
 
+def ensure_review_actions_selected_run_id(conn: sqlite3.Connection) -> None:
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(review_actions)").fetchall()}
+    if "selected_run_id" not in columns:
+        conn.execute("ALTER TABLE review_actions ADD COLUMN selected_run_id INTEGER")
+        conn.commit()
+
+
 def list_review_actions(conn: sqlite3.Connection, email_id: int) -> list[sqlite3.Row]:
+    ensure_review_actions_selected_run_id(conn)
     return list(
         conn.execute(
             """
@@ -365,7 +377,35 @@ def list_review_actions(conn: sqlite3.Connection, email_id: int) -> list[sqlite3
     )
 
 
+def list_latest_extraction_runs(conn: sqlite3.Connection, email_id: int) -> list[sqlite3.Row]:
+    return list(
+        conn.execute(
+            """
+            WITH latest_by_type AS (
+                SELECT run_type, MAX(id) AS id
+                FROM extraction_runs
+                WHERE email_id = ?
+                GROUP BY run_type
+            )
+            SELECT er.*
+            FROM latest_by_type latest
+            JOIN extraction_runs er ON er.id = latest.id
+            ORDER BY er.run_type
+            """,
+            (email_id,),
+        )
+    )
+
+
+def get_extraction_run(conn: sqlite3.Connection, run_id: int) -> sqlite3.Row:
+    row = conn.execute("SELECT * FROM extraction_runs WHERE id = ?", (run_id,)).fetchone()
+    if row is None:
+        raise LookupError(f"Extraction run not found: {run_id}")
+    return row
+
+
 def list_review_queue(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    ensure_review_actions_selected_run_id(conn)
     return list(
         conn.execute(
             """
@@ -399,8 +439,13 @@ def list_review_queue(conn: sqlite3.Connection) -> list[sqlite3.Row]:
             LEFT JOIN latest_reviews lr ON lr.email_id = e.id
             LEFT JOIN review_actions r ON r.id = lr.id
             WHERE
-                s.verification_status = 'needs_review'
-                OR e.status IN ('new', 'failed')
+                e.status IN ('new', 'failed')
+                OR (
+                    s.verification_status = 'needs_review'
+                    AND COALESCE(r.action, '') NOT IN (
+                        'approve', 'select_candidate', 'select_fields', 'override'
+                    )
+                )
                 OR r.action = 'override'
             ORDER BY e.received_at DESC, e.id DESC
             """

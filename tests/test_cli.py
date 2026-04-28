@@ -1,7 +1,10 @@
+from contextlib import closing
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
+from inbox_da import db
 from inbox_da.cli import app
 
 runner = CliRunner()
@@ -91,3 +94,33 @@ def test_cli_watch_once_offline(tmp_path: Path) -> None:
     runner.invoke(app, ["seed", "--count", "1", "--config", str(config)])
     result = runner.invoke(app, ["watch", "--once", "--offline-demo", "--config", str(config)])
     assert result.exit_code == 0, result.output
+
+
+def test_cli_watch_marks_failed_email_and_keeps_monitor_alive(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = tmp_path / "config.yaml"
+    database = tmp_path / "db.sqlite"
+    attachments = tmp_path / "attachments"
+    config.write_text(
+        "\n".join(
+            [
+                f"database_path: {database}",
+                f"attachments_dir: {attachments}",
+                "model_name: gemini-3-flash-preview",
+            ]
+        )
+    )
+    runner.invoke(app, ["seed", "--count", "1", "--config", str(config)])
+
+    def fail_process(*args, **kwargs) -> None:
+        del args, kwargs
+        raise RuntimeError("vision parser failed")
+
+    monkeypatch.setattr("inbox_da.cli.process_email", fail_process)
+    result = runner.invoke(app, ["watch", "--once", "--offline-demo", "--config", str(config)])
+    assert result.exit_code == 0, result.output
+    with closing(db.connect(database)) as conn:
+        assert db.get_email(conn, 1)["status"] == "failed"
+        trace = db.list_email_extraction_traces(conn, 1, limit=1)[0]
+        assert trace["event_name"] == "process_failed"

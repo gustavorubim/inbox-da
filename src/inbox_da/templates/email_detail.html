@@ -44,8 +44,11 @@
   </div>
 </section>
 
-<section class="panel">
+<section class="panel" id="structured-extraction">
   <h2>Structured Extraction</h2>
+  {% if notice %}
+    <div class="notice">{{ notice }}</div>
+  {% endif %}
   {% if extraction %}
   <div class="extraction-grid">
     <div><label>Document</label><span>{{ extraction.document_type }}</span></div>
@@ -66,8 +69,63 @@
   {% endif %}
 </section>
 
+<section class="panel" id="candidate-review">
+  <h2>Candidate Review</h2>
+  {% if candidate_comparison.has_candidates %}
+    <p class="muted">Accept a full candidate or choose individual fields. Saving writes a new final structured extraction and keeps the original model outputs in the audit trail.</p>
+    <div class="candidate-actions">
+      {% for candidate in candidate_comparison.candidates %}
+      <form method="post" action="/review/{{ email.id }}/select-candidate">
+        <input type="hidden" name="run_id" value="{{ candidate.id }}">
+        <input type="hidden" name="reviewer" value="operator">
+        <input type="hidden" name="note" value="Selected {{ candidate.run_type }} from candidate comparison.">
+        <button type="submit" class="button-secondary">Accept {{ candidate.run_type }}</button>
+      </form>
+      {% endfor %}
+    </div>
+    <form method="post" action="/review/{{ email.id }}/select-fields">
+      <input name="reviewer" value="operator" aria-label="Reviewer">
+      <div class="comparison-table">
+        <table>
+          <thead>
+            <tr>
+              <th>Field</th>
+              <th>Extractor A</th>
+              <th>Extractor B</th>
+              <th>Current final</th>
+              <th>Reviewer choice</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for field in candidate_comparison.fields %}
+            <tr class="{% if field.disagrees %}row-disagrees{% endif %}">
+              <td><strong>{{ field.name }}</strong></td>
+              <td>{{ field.left }}</td>
+              <td>{{ field.right }}</td>
+              <td>{{ field.final }}</td>
+              <td>
+                <select name="field_{{ field.name }}">
+                  <option value="">No field choice</option>
+                  <option value="left">Use extractor A</option>
+                  <option value="right">Use extractor B</option>
+                  <option value="final">Keep current final</option>
+                </select>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <textarea name="note" placeholder="Field selection note"></textarea>
+      <button type="submit">Save field choices</button>
+    </form>
+  {% else %}
+    <p class="muted">Run extraction to compare candidate outputs.</p>
+  {% endif %}
+</section>
+
 <section class="two-col">
-  <div class="panel">
+  <div class="panel" id="review-history">
     <h2>Review Action</h2>
     <form method="post" action="/review/{{ email.id }}/approve" class="stack">
       <input name="reviewer" value="operator" aria-label="Reviewer">
