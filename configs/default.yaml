@@ -1,0 +1,30 @@
+database_path: data/inbox_da.sqlite
+attachments_dir: data/attachments
+model_name: gemini-3-flash-preview
+temperature: 0.0
+watch_interval_seconds: 5
+attachment_text_min_chars: 80
+log_level: INFO
+trace_enabled: true
+verification_mode: mark_review
+cost_estimation:
+  # Gemini 3 Flash Preview Standard paid tier, per 1M tokens.
+  # Source: https://ai.google.dev/pricing
+  input_per_1m: 0.50
+  output_per_1m: 3.00
+  currency: USD
+  pricing_source: https://ai.google.dev/pricing
+agent:
+  subagents_enabled: true
+  skill_paths:
+    - /skills/project/
+  memory_paths:
+    - /memories/AGENTS.md
+  # Async subagents require a remote Agent Protocol/LangGraph server.
+  # Example:
+  # async_subagents:
+  #   - name: async-attachment-reader
+  #     description: Background attachment analysis running on a remote graph.
+  #     graph_id: attachment-reader
+  #     url: https://your-langgraph-server.example
+  async_subagents: []

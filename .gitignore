@@ -1,0 +1,14 @@
+.env
+.venv/
+.coverage
+.pytest_cache/
+.ruff_cache/
+__pycache__/
+*.py[cod]
+*.egg-info/
+data/*.sqlite
+data/*.sqlite-*
+data/attachments/
+data/structured_extraction.csv
+data/cost_report.csv
+data/email_*_trace.csv
