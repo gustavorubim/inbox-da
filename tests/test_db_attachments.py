@@ -1,14 +1,18 @@
+import csv
 import sqlite3
 from pathlib import Path
 
 import fitz
 import pytest
 from langchain_core.messages import HumanMessage
+from openpyxl import Workbook
+from PIL import Image, ImageDraw
+from reportlab.lib.pagesizes import letter
+from reportlab.pdfgen import canvas
 
 from inbox_da import db
 from inbox_da.attachments import GeminiVisionParser, parse_attachment
 from inbox_da.config import Settings
-from inbox_da.synthetic import seed_database
 
 
 class FakeVision:
@@ -50,6 +54,120 @@ def conn(tmp_path: Path):
         connection.close()
 
 
+def insert_sample_email(conn: sqlite3.Connection) -> int:
+    return db.insert_email(
+        conn,
+        message_id="<oracle-fixture@example.test>",
+        sender="billing@northstar.example",
+        received_at="2026-04-28T10:00:00Z",
+        subject="Invoice INV-0001 from Northstar Supplies",
+        body=(
+            "Please review INV-0001. The invoice total is USD 1,037.25. "
+            "Counterparty: Northstar Supplies. Due date: 2026-05-15. "
+            "Account: Operations-4182."
+        ),
+    )
+
+
+def create_core_attachments(
+    conn: sqlite3.Connection, *, email_id: int, attachments_dir: Path
+) -> None:
+    attachments_dir.mkdir(parents=True, exist_ok=True)
+    _create_txt(conn, email_id=email_id, attachments_dir=attachments_dir)
+    _create_csv(conn, email_id=email_id, attachments_dir=attachments_dir)
+    _create_xlsx(conn, email_id=email_id, attachments_dir=attachments_dir)
+    _create_pdf(conn, email_id=email_id, attachments_dir=attachments_dir)
+    _create_png(conn, email_id=email_id, attachments_dir=attachments_dir)
+
+
+def _create_txt(conn: sqlite3.Connection, *, email_id: int, attachments_dir: Path) -> None:
+    path = attachments_dir / "memo.txt"
+    path.write_text("INV-0001\nAmount: USD 1037.25\nCounterparty: Northstar Supplies\n")
+    db.insert_attachment(
+        conn,
+        email_id=email_id,
+        filename=path.name,
+        mime_type="text/plain",
+        storage_path=str(path),
+    )
+
+
+def _create_csv(conn: sqlite3.Connection, *, email_id: int, attachments_dir: Path) -> None:
+    path = attachments_dir / "line-items.csv"
+    with path.open("w", newline="") as handle:
+        writer = csv.DictWriter(
+            handle, fieldnames=["reference", "description", "amount", "currency"]
+        )
+        writer.writeheader()
+        writer.writerow(
+            {
+                "reference": "INV-0001",
+                "description": "Financial services",
+                "amount": "1037.25",
+                "currency": "USD",
+            }
+        )
+    db.insert_attachment(
+        conn,
+        email_id=email_id,
+        filename=path.name,
+        mime_type="text/csv",
+        storage_path=str(path),
+    )
+
+
+def _create_xlsx(conn: sqlite3.Connection, *, email_id: int, attachments_dir: Path) -> None:
+    path = attachments_dir / "schedule.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.append(["reference", "period", "amount", "currency"])
+    sheet.append(["INV-0001", "2026-04", 1037.25, "USD"])
+    workbook.save(path)
+    db.insert_attachment(
+        conn,
+        email_id=email_id,
+        filename=path.name,
+        mime_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        storage_path=str(path),
+    )
+
+
+def _create_pdf(conn: sqlite3.Connection, *, email_id: int, attachments_dir: Path) -> None:
+    path = attachments_dir / "invoice.pdf"
+    pdf = canvas.Canvas(str(path), pagesize=letter)
+    pdf.drawString(72, 720, "Reference: INV-0001")
+    pdf.drawString(72, 700, "Counterparty: Northstar Supplies")
+    pdf.drawString(72, 680, "Amount Due: USD 1037.25")
+    pdf.drawString(72, 660, "Due Date: 2026-05-15")
+    pdf.save()
+    db.insert_attachment(
+        conn,
+        email_id=email_id,
+        filename=path.name,
+        mime_type="application/pdf",
+        storage_path=str(path),
+    )
+
+
+def _create_png(conn: sqlite3.Connection, *, email_id: int, attachments_dir: Path) -> None:
+    path = attachments_dir / "receipt.png"
+    image = Image.new("RGB", (900, 420), "white")
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((20, 20, 880, 400), outline="black", width=3)
+    draw.text((60, 80), "Financial Receipt", fill="black")
+    draw.text((60, 140), "Reference: INV-0001", fill="black")
+    draw.text((60, 200), "Amount: USD 1037.25", fill="black")
+    draw.text((60, 260), "Counterparty: Northstar Supplies", fill="black")
+    image.save(path)
+    db.insert_attachment(
+        conn,
+        email_id=email_id,
+        filename=path.name,
+        mime_type="image/png",
+        storage_path=str(path),
+    )
+
+
 def test_schema_and_foreign_keys(conn: sqlite3.Connection) -> None:
     email_id = db.insert_email(
         conn,
@@ -59,6 +177,8 @@ def test_schema_and_foreign_keys(conn: sqlite3.Connection) -> None:
         subject="Subject",
         body="Body",
     )
+    assert db.get_email_id_by_message_id(conn, "<a@test>") == email_id
+    assert db.get_email_id_by_message_id(conn, "<missing@test>") is None
     attachment_id = db.insert_attachment(
         conn,
         email_id=email_id,
@@ -182,9 +302,9 @@ def test_relative_database_connection_survives_cwd_change(
         connection.close()
 
 
-def test_seed_generates_core_attachment_types(conn: sqlite3.Connection, tmp_path: Path) -> None:
-    ids = seed_database(conn, count=8, attachments_dir=tmp_path / "attachments")
-    assert len(ids) == 8
+def test_local_fixture_has_core_attachment_types(conn: sqlite3.Connection, tmp_path: Path) -> None:
+    email_id = insert_sample_email(conn)
+    create_core_attachments(conn, email_id=email_id, attachments_dir=tmp_path / "attachments")
     rows = conn.execute("SELECT mime_type FROM attachments").fetchall()
     mime_types = {row["mime_type"] for row in rows}
     assert "image/png" in mime_types
@@ -194,21 +314,9 @@ def test_seed_generates_core_attachment_types(conn: sqlite3.Connection, tmp_path
     assert "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" in mime_types
 
 
-def test_seed_can_be_called_repeatedly(conn: sqlite3.Connection, tmp_path: Path) -> None:
-    first = seed_database(conn, count=2, attachments_dir=tmp_path / "attachments")
-    second = seed_database(conn, count=1, attachments_dir=tmp_path / "attachments")
-    assert first == [1, 2]
-    assert second == [3]
-    rows = conn.execute("SELECT message_id FROM emails ORDER BY id").fetchall()
-    assert [row["message_id"] for row in rows] == [
-        "<synthetic-1@inbox-da.local>",
-        "<synthetic-2@inbox-da.local>",
-        "<synthetic-3@inbox-da.local>",
-    ]
-
-
 def test_parse_text_csv_xlsx_pdf_and_image(conn: sqlite3.Connection, tmp_path: Path) -> None:
-    seed_database(conn, count=5, attachments_dir=tmp_path / "attachments")
+    email_id = insert_sample_email(conn)
+    create_core_attachments(conn, email_id=email_id, attachments_dir=tmp_path / "attachments")
     settings = Settings(attachment_text_min_chars=5)
     fake = FakeVision()
     rows = conn.execute("SELECT * FROM attachments").fetchall()

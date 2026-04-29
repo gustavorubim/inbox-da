@@ -17,7 +17,6 @@ from inbox_da.agent import (
 from inbox_da.config import Settings
 from inbox_da.costing import TokenUsage
 from inbox_da.models import StructuredExtraction, VerificationResult
-from inbox_da.synthetic import seed_database
 
 
 class DisagreeingExtractor:
@@ -50,10 +49,32 @@ class NeedsReviewVerifier:
 
 
 @pytest.fixture
-def seeded_conn(tmp_path: Path):
+def inbox_conn(tmp_path: Path):
     conn = db.connect(tmp_path / "workflow.sqlite")
     db.init_db(conn)
-    [email_id] = seed_database(conn, count=1, attachments_dir=tmp_path / "attachments")
+    email_id = db.insert_email(
+        conn,
+        message_id="<oracle-1@example.test>",
+        sender="billing@northstar.example",
+        received_at="2026-04-28T10:00:00Z",
+        subject="Invoice INV-0001 from Northstar Supplies",
+        body=(
+            "Please review INV-0001. The invoice total is USD 1,037.25. "
+            "Counterparty: Northstar Supplies. Due date: 2026-05-15. "
+            "Account: Operations-4182."
+        ),
+    )
+    attachment_dir = tmp_path / "attachments" / str(email_id)
+    attachment_dir.mkdir(parents=True, exist_ok=True)
+    attachment_path = attachment_dir / "invoice.txt"
+    attachment_path.write_text("INV-0001\nAmount Due: USD 1037.25\n")
+    db.insert_attachment(
+        conn,
+        email_id=email_id,
+        filename=attachment_path.name,
+        mime_type="text/plain",
+        storage_path=str(attachment_path),
+    )
     settings = Settings(
         database_path=tmp_path / "workflow.sqlite", attachments_dir=tmp_path / "attachments"
     )
@@ -63,8 +84,8 @@ def seeded_conn(tmp_path: Path):
         conn.close()
 
 
-def test_process_email_verified_path(seeded_conn: tuple[sqlite3.Connection, int, Settings]) -> None:
-    conn, email_id, settings = seeded_conn
+def test_process_email_verified_path(inbox_conn: tuple[sqlite3.Connection, int, Settings]) -> None:
+    conn, email_id, settings = inbox_conn
     extraction_id = process_email(
         conn,
         email_id=email_id,
@@ -89,9 +110,9 @@ def test_process_email_verified_path(seeded_conn: tuple[sqlite3.Connection, int,
 
 
 def test_process_email_needs_review_path(
-    seeded_conn: tuple[sqlite3.Connection, int, Settings],
+    inbox_conn: tuple[sqlite3.Connection, int, Settings],
 ) -> None:
-    conn, email_id, settings = seeded_conn
+    conn, email_id, settings = inbox_conn
     extraction_id = process_email(
         conn,
         email_id=email_id,
@@ -107,7 +128,7 @@ def test_process_email_needs_review_path(
 
 
 def test_agent_run_usage_is_persisted(
-    seeded_conn: tuple[sqlite3.Connection, int, Settings],
+    inbox_conn: tuple[sqlite3.Connection, int, Settings],
 ) -> None:
     class UsageExtractor:
         def extract(self, context: dict[str, Any], *, pass_name: str) -> AgentRun:
@@ -136,7 +157,7 @@ def test_agent_run_usage_is_persisted(
                 ),
             )
 
-    conn, email_id, settings = seeded_conn
+    conn, email_id, settings = inbox_conn
     process_email(
         conn,
         email_id=email_id,
@@ -226,8 +247,8 @@ def test_normalize_verification_payload_maps_model_statuses() -> None:
     }
 
 
-def test_mark_and_claim_email(seeded_conn: tuple[sqlite3.Connection, int, Settings]) -> None:
-    conn, email_id, _settings = seeded_conn
+def test_mark_and_claim_email(inbox_conn: tuple[sqlite3.Connection, int, Settings]) -> None:
+    conn, email_id, _settings = inbox_conn
     claimed = db.claim_new_emails(conn)
     assert claimed == [email_id]
     assert db.get_email(conn, email_id)["status"] == "processing"

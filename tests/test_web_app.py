@@ -5,7 +5,6 @@ from fastapi.testclient import TestClient
 
 from inbox_da import db
 from inbox_da.config import Settings
-from inbox_da.synthetic import seed_database
 from inbox_da.web import create_app
 
 
@@ -19,7 +18,29 @@ def test_web_dashboard_process_review_and_costs(tmp_path: Path) -> None:
     )
     with closing(db.connect(database)) as conn:
         db.init_db(conn)
-        seed_database(conn, count=2, attachments_dir=attachments)
+        db.insert_email(
+            conn,
+            message_id="<oracle-1@example.test>",
+            sender="billing@northstar.example",
+            received_at="2026-04-28T10:00:00Z",
+            subject="Invoice INV-0001 from Northstar Supplies",
+            body=(
+                "Please review INV-0001. The invoice total is USD 1,037.25. "
+                "Counterparty: Northstar Supplies. Due date: 2026-05-15. "
+                "Account: Operations-4182."
+            ),
+        )
+        db.insert_email(
+            conn,
+            message_id="<oracle-2@example.test>",
+            sender="alerts@metrobank.example",
+            received_at="2026-04-28T09:00:00Z",
+            subject="Bank notice for operating account 0002",
+            body=(
+                "Please review BANK-0002. The bank notice total is USD 1,074.50. "
+                "Counterparty: Northstar Supplies. Due date: 2026-05-15."
+            ),
+        )
 
     app = create_app(settings, process_offline_demo=True)
     with TestClient(app) as client:

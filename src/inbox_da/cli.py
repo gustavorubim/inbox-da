@@ -17,7 +17,7 @@ from inbox_da.agent import process_email
 from inbox_da.config import load_settings
 from inbox_da.logging_utils import configure_logging, console, print_key_values, show_header
 from inbox_da.model_provider import agent_runtime_summary, validate_model_config
-from inbox_da.synthetic import seed_database
+from inbox_da.oracle_inbox import sync_oracle_inbox
 
 app = typer.Typer(help="DeepAgent financial inbox monitor.")
 
@@ -80,32 +80,47 @@ def init_db(config: ConfigOpt = Path("configs/default.yaml")) -> None:
     print_key_values("Database", {"path": settings.database_path, "status": "ready"})
 
 
-@app.command("seed")
-def seed(
-    count: Annotated[int, typer.Option("--count", min=1)] = 50,
+@app.command("sync-oracle")
+def sync_oracle(
+    limit: Annotated[int | None, typer.Option("--limit", min=1)] = None,
     config: ConfigOpt = Path("configs/default.yaml"),
 ) -> None:
     settings = load_settings(config)
     configure_logging(settings.log_level)
+    show_header("inbox-da", "Syncing Oracle inbox")
     with closing(db.connect(settings.database_path)) as conn:
         db.init_db(conn)
-        ids = seed_database(conn, count=count, attachments_dir=settings.attachments_dir)
-    print_key_values(
-        "Seed complete", {"emails": len(ids), "attachments_dir": settings.attachments_dir}
-    )
+        result = sync_oracle_inbox(conn, settings=settings, limit=limit)
+    print_key_values("Oracle", settings.oracle.redacted_summary())
+    print_key_values("Sync complete", result.__dict__)
 
 
 @app.command("ingest-one")
 def ingest_one(config: ConfigOpt = Path("configs/default.yaml")) -> None:
     settings = load_settings(config)
     configure_logging(settings.log_level)
+    show_header("inbox-da", "Ingesting one Oracle email")
     with closing(db.connect(settings.database_path)) as conn:
         db.init_db(conn)
-        ids = seed_database(conn, count=1, attachments_dir=settings.attachments_dir)
+        result = sync_oracle_inbox(conn, settings=settings, limit=1)
+        if not result.inserted_email_ids:
+            print_key_values(
+                "Ingested",
+                {
+                    "email_id": "",
+                    "extraction_id": "",
+                    "status": "no new Oracle email rows",
+                    "fetched": result.fetched,
+                    "skipped": result.skipped,
+                },
+            )
+            return
         extraction_id = process_email(
-            conn, email_id=ids[0], settings=settings, require_credentials=False
+            conn, email_id=result.inserted_email_ids[0], settings=settings, require_credentials=True
         )
-    print_key_values("Ingested", {"email_id": ids[0], "extraction_id": extraction_id})
+    print_key_values(
+        "Ingested", {"email_id": result.inserted_email_ids[0], "extraction_id": extraction_id}
+    )
 
 
 @app.command("process")
@@ -153,6 +168,13 @@ def watch(
         db.init_db(conn)
         poll_interval = interval or settings.watch_interval_seconds
         while True:
+            if settings.oracle.enabled:
+                result = sync_oracle_inbox(conn, settings=settings)
+                console.log(
+                    "[cyan]oracle sync[/] "
+                    f"fetched={result.fetched} inserted={result.inserted} "
+                    f"skipped={result.skipped} attachments={result.attachments_inserted}"
+                )
             for email_id in db.claim_new_emails(conn, limit=1):
                 try:
                     process_email(

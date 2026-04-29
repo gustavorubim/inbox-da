@@ -18,6 +18,105 @@ from inbox_da.costing import (
 
 
 @dataclass(frozen=True)
+class OracleEmailColumns:
+    message_id: str = "MESSAGE_ID"
+    sender: str = "SENDER"
+    received_at: str = "RECEIVED_AT"
+    subject: str = "SUBJECT"
+    body: str = "BODY"
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any] | None) -> OracleEmailColumns:
+        if not data:
+            return cls()
+        if not isinstance(data, dict):
+            raise ValueError("Config key 'oracle.email_columns' must be a mapping")
+        return cls(
+            message_id=str(data.get("message_id", cls.message_id)),
+            sender=str(data.get("sender", cls.sender)),
+            received_at=str(data.get("received_at", cls.received_at)),
+            subject=str(data.get("subject", cls.subject)),
+            body=str(data.get("body", cls.body)),
+        )
+
+
+@dataclass(frozen=True)
+class OracleAttachmentColumns:
+    message_id: str = "MESSAGE_ID"
+    filename: str = "FILENAME"
+    mime_type: str = "MIME_TYPE"
+    content: str = "CONTENT_BLOB"
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any] | None) -> OracleAttachmentColumns:
+        if not data:
+            return cls()
+        if not isinstance(data, dict):
+            raise ValueError("Config key 'oracle.attachment_columns' must be a mapping")
+        return cls(
+            message_id=str(data.get("message_id", cls.message_id)),
+            filename=str(data.get("filename", cls.filename)),
+            mime_type=str(data.get("mime_type", cls.mime_type)),
+            content=str(data.get("content", cls.content)),
+        )
+
+
+@dataclass(frozen=True)
+class OracleInboxSettings:
+    enabled: bool = False
+    host: str = ""
+    port: int = 1521
+    service_name: str = ""
+    username: str = ""
+    password: str = ""
+    password_env: str = "ORACLE_DB_PASSWORD"
+    email_table: str = "EMAILS"
+    email_columns: OracleEmailColumns = field(default_factory=OracleEmailColumns)
+    attachment_table: str | None = None
+    attachment_columns: OracleAttachmentColumns = field(default_factory=OracleAttachmentColumns)
+    fetch_limit: int = 50
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any] | None) -> OracleInboxSettings:
+        if data is None:
+            data = {}
+        if not isinstance(data, dict):
+            raise ValueError("Config key 'oracle' must be a mapping")
+
+        password_env = str(data.get("password_env", cls.password_env))
+        password = str(data.get("password") or os.environ.get(password_env, ""))
+        service_name = data.get("service_name", data.get("servicename", cls.service_name))
+        attachment_table = data.get("attachment_table")
+        return cls(
+            enabled=bool(data.get("enabled", cls.enabled)),
+            host=str(data.get("host") or os.environ.get("ORACLE_DB_HOST", "")),
+            port=int(data.get("port") or os.environ.get("ORACLE_DB_PORT", cls.port)),
+            service_name=str(service_name or os.environ.get("ORACLE_DB_SERVICE_NAME", "")),
+            username=str(data.get("username") or os.environ.get("ORACLE_DB_USERNAME", "")),
+            password=password,
+            password_env=password_env,
+            email_table=str(data.get("email_table", cls.email_table)),
+            email_columns=OracleEmailColumns.from_dict(data.get("email_columns")),
+            attachment_table=str(attachment_table) if attachment_table else None,
+            attachment_columns=OracleAttachmentColumns.from_dict(data.get("attachment_columns")),
+            fetch_limit=int(data.get("fetch_limit", cls.fetch_limit)),
+        )
+
+    def redacted_summary(self) -> dict[str, Any]:
+        return {
+            "enabled": self.enabled,
+            "host": self.host,
+            "port": self.port,
+            "service_name": self.service_name,
+            "username": self.username,
+            "password_env": self.password_env,
+            "email_table": self.email_table,
+            "attachment_table": self.attachment_table or "",
+            "fetch_limit": self.fetch_limit,
+        }
+
+
+@dataclass(frozen=True)
 class Settings:
     database_path: Path = Path("data/inbox_da.sqlite")
     attachments_dir: Path = Path("data/attachments")
@@ -36,6 +135,7 @@ class Settings:
     cost_output_per_1m: float = GEMINI_FLASH_PREVIEW_OUTPUT_PER_1M_USD
     cost_currency: str = "USD"
     cost_pricing_source: str = GEMINI_FLASH_PRICING_SOURCE
+    oracle: OracleInboxSettings = field(default_factory=OracleInboxSettings)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Settings:
@@ -71,6 +171,7 @@ class Settings:
             cost_output_per_1m=float(cost.get("output_per_1m", cls.cost_output_per_1m)),
             cost_currency=str(cost.get("currency", cls.cost_currency)),
             cost_pricing_source=str(cost.get("pricing_source", cls.cost_pricing_source)),
+            oracle=OracleInboxSettings.from_dict(data.get("oracle")),
         )
 
 

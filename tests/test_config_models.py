@@ -9,13 +9,24 @@ from inbox_da.model_provider import validate_model_config
 from inbox_da.models import Evidence, StructuredExtraction, extractions_match
 
 
-def test_load_settings_from_yaml(tmp_path: Path) -> None:
+def test_load_settings_from_yaml(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     path = tmp_path / "config.yaml"
     path.write_text(
         yaml.safe_dump(
             {
                 "database_path": "x.sqlite",
                 "model_name": "gemini-3-flash-preview",
+                "oracle": {
+                    "enabled": True,
+                    "host": "db.example.test",
+                    "port": 1521,
+                    "service_name": "finance",
+                    "username": "inbox_reader",
+                    "password_env": "TEST_ORACLE_PASSWORD",
+                    "email_table": "FINANCE.EMAIL_INBOX",
+                    "email_columns": {"message_id": "EMAIL_GUID", "body": "BODY_CLOB"},
+                    "attachment_table": "FINANCE.EMAIL_ATTACHMENTS",
+                },
                 "agent": {
                     "subagents_enabled": False,
                     "skill_paths": ["/skills/custom/"],
@@ -31,9 +42,18 @@ def test_load_settings_from_yaml(tmp_path: Path) -> None:
             }
         )
     )
+    monkeypatch.setenv("TEST_ORACLE_PASSWORD", "secret")
     settings = load_settings(path)
     assert settings.database_path == Path("x.sqlite")
     assert settings.model_name == "gemini-3-flash-preview"
+    assert settings.oracle.enabled is True
+    assert settings.oracle.host == "db.example.test"
+    assert settings.oracle.service_name == "finance"
+    assert settings.oracle.password == "secret"
+    assert settings.oracle.email_table == "FINANCE.EMAIL_INBOX"
+    assert settings.oracle.email_columns.message_id == "EMAIL_GUID"
+    assert settings.oracle.email_columns.body == "BODY_CLOB"
+    assert settings.oracle.attachment_table == "FINANCE.EMAIL_ATTACHMENTS"
     assert settings.subagents_enabled is False
     assert settings.skill_paths == ("/skills/custom/",)
     assert settings.memory_paths == ("/memories/custom.md",)

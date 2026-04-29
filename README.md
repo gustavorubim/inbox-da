@@ -1,8 +1,8 @@
 # DeepAgent Inbox Monitor
 
-`inbox-da` is a synthetic financial inbox pipeline for testing a LangChain
-DeepAgents extraction workflow. It creates realistic financial emails and
-attachments, stores them in SQLite, parses attachments, runs extraction and
+`inbox-da` is a financial inbox monitor for Oracle-backed email sources. It
+copies email rows and optional attachment BLOBs from Oracle into a local SQLite
+audit store, parses attachments, runs LangChain DeepAgents extraction and
 verification passes, and writes auditable structured records.
 
 The required model default is `gemini-3-flash-preview` for extraction,
@@ -14,20 +14,22 @@ verification, image parsing, and scanned or low-text PDF parsing.
 uv sync
 cp .env.example .env
 uv run inbox-da init-db
-uv run inbox-da seed --count 50
+uv run inbox-da sync-oracle --limit 50
 uv run inbox-da process --email-id 1 --offline-demo
 uv run inbox-da inspect --email-id 1
 ```
 
 Set `GOOGLE_API_KEY` in your shell or `.env` before running live Gemini agent
-commands. Tests and demo commands can use mocked or deterministic local paths.
+commands. Set Oracle credentials in environment variables or `configs/default.yaml`
+before running `sync-oracle`; the default password source is
+`ORACLE_DB_PASSWORD`.
 
 ## Command Map
 
 ```bash
 uv run inbox-da init-db
 uv run inbox-da agent-info
-uv run inbox-da seed --count 50
+uv run inbox-da sync-oracle --limit 50
 uv run inbox-da ingest-one
 uv run inbox-da process --email-id 1
 uv run inbox-da process --email-id 1 --offline-demo
@@ -44,9 +46,10 @@ uv run inbox-da web --host 127.0.0.1 --port 8000
 
 ```mermaid
 flowchart LR
-    init["init-db"] --> seed["seed --count 50"]
-    seed --> process["process --email-id <id>"]
-    seed --> watch["watch --interval 5"]
+    init["init-db"] --> sync["sync-oracle --limit 50"]
+    sync --> process["process --email-id <id>"]
+    sync --> watch["watch --interval 5"]
+    sync --> ingest["ingest-one"]
     process --> inspect["inspect --email-id <id>"]
     process --> trace["trace --email-id <id>"]
     trace --> tracecsv["export-trace --output trace.csv"]
@@ -58,7 +61,7 @@ flowchart LR
     web --> trace
 
     classDef command fill:#e7f0ff,stroke:#3366cc,color:#102a43
-    class init,seed,process,watch,inspect,trace,tracecsv,cost,export,web command
+    class init,sync,ingest,process,watch,inspect,trace,tracecsv,cost,export,web command
 ```
 
 The CLI uses Rich panels, spinners, progress indicators, and tables so long
@@ -72,7 +75,7 @@ email-level extraction trace.
 ```mermaid
 flowchart TB
     repo["inbox-da"] --> pyproject["pyproject.toml<br/>uv package metadata, deps, ruff, pytest"]
-    repo --> config["configs/default.yaml<br/>model, paths, watch interval, costs, agent runtime"]
+    repo --> config["configs/default.yaml<br/>model, Oracle source, paths, watch interval, costs, agent runtime"]
     repo --> env[".env.example<br/>GOOGLE_API_KEY template"]
     repo --> src["src/inbox_da"]
     repo --> tests["tests"]
@@ -88,7 +91,7 @@ flowchart TB
     src --> schema["schema.sql<br/>database DDL"]
     src --> models["models.py<br/>Pydantic output contracts"]
     src --> provider["model_provider.py<br/>Gemini and DeepAgents factory"]
-    src --> synthetic["synthetic.py<br/>financial emails and attachment generator"]
+    src --> oracle["oracle_inbox.py<br/>read-only Oracle sync adapter"]
     src --> costing["costing.py<br/>token usage and cost estimates"]
     src --> logging["logging_utils.py<br/>Rich terminal output"]
     src --> cfg["config.py<br/>YAML and .env settings"]
@@ -112,7 +115,7 @@ flowchart TB
     classDef docs fill:#fefce8,stroke:#a16207,color:#422006
     class repo repo
     class data,config,env runtime
-    class src,cli,agent,attachments,db,schema,models,provider,synthetic,costing,logging,cfg,webapp,templates,static code
+    class src,cli,agent,attachments,db,schema,models,provider,oracle,costing,logging,cfg,webapp,templates,static code
     class tests,t1,t2,t3,t4 tests
     class docs,skills,memory,skillA,skillB,skillC docs
 ```
@@ -128,10 +131,11 @@ flowchart TB
     settings --> dbconn["SQLite connection<br/>db.connect"]
     dbconn --> schema["schema.sql<br/>init_db"]
 
-    cli --> generator["Synthetic inbox generator<br/>synthetic.seed_database"]
-    generator --> emails["emails table"]
-    generator --> attachmentfiles["data/attachments/<email_id>/..."]
-    generator --> attachmentsdb["attachments table"]
+    cli --> oracle["Oracle inbox reader<br/>oracle_inbox.sync_oracle_inbox"]
+    oracle --> source["Oracle email table<br/>read-only SELECT"]
+    oracle --> emails["emails table"]
+    oracle --> attachmentfiles["data/attachments/<email_id>/..."]
+    oracle --> attachmentsdb["attachments table"]
 
     cli --> workflow["process_email<br/>agent.py"]
     workflow --> attachmentparser["Attachment parser<br/>attachments.py"]
@@ -168,8 +172,59 @@ flowchart TB
     class cli,reports,webui,pages report
     class settings config
     class dbconn,schema,emails,attachmentsdb,attachmentfiles,extraction,runs,traces,costs,reviewactions storage
-    class workflow,attachmentparser,vision,model,deepagents,subagents,skills,memory,generator agent
+    class workflow,attachmentparser,vision,model,deepagents,subagents,skills,memory,oracle agent
 ```
+
+## Oracle Inbox Configuration
+
+The Oracle integration uses the `oracledb` package in thin mode and only reads
+from configured inbox tables. SQLite remains the local processing and audit
+database. The adapter writes local changes through typed repository helpers in
+`src/inbox_da/db.py`.
+
+```yaml
+oracle:
+  enabled: true
+  host: your-oracle-host.example.com
+  port: 1521
+  service_name: FINANCEPDB
+  username: inbox_reader
+  password_env: ORACLE_DB_PASSWORD
+  email_table: FINANCE.EMAIL_INBOX
+  email_columns:
+    message_id: MESSAGE_ID
+    sender: SENDER
+    received_at: RECEIVED_AT
+    subject: SUBJECT
+    body: BODY
+  attachment_table: FINANCE.EMAIL_ATTACHMENTS
+  attachment_columns:
+    message_id: MESSAGE_ID
+    filename: FILENAME
+    mime_type: MIME_TYPE
+    content: CONTENT_BLOB
+  fetch_limit: 50
+```
+
+The minimum Oracle email table shape is one row per email with a unique message
+id, sender, received timestamp, subject, and body. Attachments are optional. If
+`attachment_table` is omitted, synced emails are still processable from body
+text alone. If it is configured, each attachment row is read by message id,
+written to `data/attachments/<email_id>/`, and registered in the local
+`attachments` table.
+
+Use these commands for Oracle-backed ingestion:
+
+```bash
+export ORACLE_DB_PASSWORD='...'
+uv run inbox-da sync-oracle --limit 50
+uv run inbox-da ingest-one
+uv run inbox-da watch --interval 5
+```
+
+When `oracle.enabled: true`, `watch` polls Oracle before each local processing
+cycle. Repeated syncs are idempotent by `message_id`; existing local emails are
+skipped.
 
 ## Web Monitor
 
@@ -280,6 +335,8 @@ sequenceDiagram
     participant Verifier as Verifier agent
     participant Reports as Reports and exports
 
+    Operator->>CLI: inbox-da sync-oracle --limit 50
+    CLI->>DB: insert new Oracle emails and attachment metadata
     Operator->>CLI: inbox-da process --email-id 1
     CLI->>DB: init_db and get_email
     DB-->>CLI: email row and attachment metadata
@@ -523,13 +580,14 @@ erDiagram
 
 ### `emails`
 
-Raw inbox messages. V1 uses synthetic messages only; Gmail or IMAP can be added
-later as an ingestion adapter.
+Raw inbox messages copied from Oracle into the local processing store. This
+table is intentionally local so extraction, review, trace, and cost history
+remain auditable even when the upstream inbox is read-only.
 
 | Column | Type | Notes |
 |---|---:|---|
 | `id` | INTEGER | Primary key |
-| `message_id` | TEXT | Unique synthetic or external message id |
+| `message_id` | TEXT | Unique Oracle or external message id |
 | `sender` | TEXT | Sender address |
 | `received_at` | TEXT | Received timestamp |
 | `subject` | TEXT | Email subject |
@@ -566,7 +624,7 @@ Final normalized financial result for an email.
 | `account_or_customer` | TEXT | Account, customer, or internal business reference |
 | `period_start` | TEXT | Start date for statements or summaries |
 | `period_end` | TEXT | End date for statements or summaries |
-| `currency` | TEXT | Currency code, usually `USD` in synthetic data |
+| `currency` | TEXT | Currency code extracted from source evidence |
 | `amount` | REAL | Core amount extracted from source evidence |
 | `due_date` | TEXT | Payment or action due date when present |
 | `reference_number` | TEXT | Invoice, receipt, transfer, or notice reference |
@@ -673,7 +731,7 @@ output rows.
 
 ```mermaid
 stateDiagram-v2
-    [*] --> new: seed or ingest-one
+    [*] --> new: sync-oracle or ingest-one
     new --> processing: watch claim_new_emails
     processing --> processed: process_email completes
     processing --> failed: future failure handler
@@ -737,14 +795,14 @@ uv run inbox-da cost-report --format csv --output data/cost_report.csv
 
 | Area | File | Main functions or classes |
 |---|---|---|
-| CLI | `src/inbox_da/cli.py` | `init_db`, `seed`, `process`, `watch`, `inspect_email`, `trace_email`, `export_trace`, `cost_report`, `web` |
+| CLI | `src/inbox_da/cli.py` | `init_db`, `sync_oracle`, `ingest_one`, `process`, `watch`, `inspect_email`, `trace_email`, `export_trace`, `cost_report`, `web` |
 | Web monitor | `src/inbox_da/web.py` | `create_app`, inbox, email detail, review actions, cost dashboard |
 | Workflow | `src/inbox_da/agent.py` | `process_email`, `_parse_attachments`, `_run_extractors`, `_choose_final` |
 | Gemini and DeepAgents | `src/inbox_da/model_provider.py` | `build_gemini_model`, `build_deep_agent`, `build_subagents` |
 | Attachment parsing | `src/inbox_da/attachments.py` | `parse_attachment`, `GeminiVisionParser`, `OfflineVisionParser` |
+| Oracle inbox | `src/inbox_da/oracle_inbox.py` | `sync_oracle_inbox`, `OracleInboxClient`, `OracleEmailRecord`, `OracleAttachmentRecord` |
 | Data access | `src/inbox_da/db.py` | typed insert, read, report, trace, cost, and status helpers |
 | Schema | `src/inbox_da/schema.sql` | SQLite tables and foreign keys |
-| Synthetic inbox | `src/inbox_da/synthetic.py` | `seed_database`, attachment creators |
 | Contracts | `src/inbox_da/models.py` | `StructuredExtraction`, `VerificationResult`, `Evidence`, `LineItem` |
 | Costing | `src/inbox_da/costing.py` | `TokenUsage`, `CostEstimate`, `estimate_cost`, `collect_token_usage` |
 

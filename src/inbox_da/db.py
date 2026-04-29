@@ -46,6 +46,11 @@ def insert_email(
     return int(cursor.lastrowid)
 
 
+def get_email_id_by_message_id(conn: sqlite3.Connection, message_id: str) -> int | None:
+    row = conn.execute("SELECT id FROM emails WHERE message_id = ?", (message_id,)).fetchone()
+    return int(row["id"]) if row else None
+
+
 def insert_attachment(
     conn: sqlite3.Connection,
     *,

@@ -1,6 +1,6 @@
 # Inbox DA Agent Memory
 
-This project extracts financial information from synthetic inbox messages into SQLite.
+This project extracts financial information from Oracle-backed inbox messages into SQLite.
 
 Durable rules:
 - `gemini-3-flash-preview` is the required live model for extraction, verification, image parsing, and scanned or low-text PDF parsing.

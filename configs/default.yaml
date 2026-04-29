@@ -7,6 +7,28 @@ attachment_text_min_chars: 80
 log_level: INFO
 trace_enabled: true
 verification_mode: mark_review
+oracle:
+  enabled: false
+  host: ""
+  port: 1521
+  service_name: ""
+  username: ""
+  password_env: ORACLE_DB_PASSWORD
+  email_table: EMAILS
+  email_columns:
+    message_id: MESSAGE_ID
+    sender: SENDER
+    received_at: RECEIVED_AT
+    subject: SUBJECT
+    body: BODY
+  # Optional: set this when attachments are stored as Oracle BLOB rows.
+  attachment_table:
+  attachment_columns:
+    message_id: MESSAGE_ID
+    filename: FILENAME
+    mime_type: MIME_TYPE
+    content: CONTENT_BLOB
+  fetch_limit: 50
 cost_estimation:
   # Gemini 3 Flash Preview Standard paid tier, per 1M tokens.
   # Source: https://ai.google.dev/pricing
